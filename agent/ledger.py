@@ -40,9 +40,71 @@ from __future__ import annotations
 from pathlib import Path
 
 
+import hashlib
+import json
+from pathlib import Path
+
+
 def append(entry: dict, path: Path) -> dict:
-    raise NotImplementedError("BƯỚC 3d: implement ledger append")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    prev_hash = "0" * 64
+    if path.exists() and path.stat().st_size > 0:
+        lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if lines:
+            last_entry = json.loads(lines[-1])
+            prev_hash = last_entry.get("hash", "0" * 64)
+
+    record = dict(entry)
+    record["prev_hash"] = prev_hash
+    if "hash" in record:
+        del record["hash"]
+
+    payload_str = json.dumps(record, sort_keys=True, ensure_ascii=False)
+    entry_hash = hashlib.sha256(payload_str.encode("utf-8")).hexdigest()
+    record["hash"] = entry_hash
+
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    return record
 
 
 def verify(path: Path) -> bool:
-    raise NotImplementedError("BƯỚC 3d: implement ledger verify")
+    path = Path(path)
+    if not path.exists():
+        return True
+
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        return True
+
+    expected_prev = "0" * 64
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except Exception:
+            return False
+
+        if not record.get("reason"):
+            return False
+
+        if record.get("prev_hash") != expected_prev:
+            return False
+
+        stored_hash = record.get("hash")
+        if not stored_hash:
+            return False
+
+        record_to_hash = {k: v for k, v in record.items() if k != "hash"}
+        computed_hash = hashlib.sha256(
+            json.dumps(record_to_hash, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
+        if computed_hash != stored_hash:
+            return False
+
+        expected_prev = stored_hash
+
+    return True

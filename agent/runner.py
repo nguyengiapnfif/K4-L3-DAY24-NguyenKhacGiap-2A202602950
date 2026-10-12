@@ -59,7 +59,7 @@ Interface bắt buộc (agent/loop.py import và gọi hàm này nếu tồn t�
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -87,7 +87,7 @@ def handle(
 ) -> str:
     ledger_path = (Path(log_dir) / "ledger.jsonl") if log_dir else DEFAULT_LEDGER_PATH
     run_id = f"run-{uuid.uuid4().hex[:8]}"
-    expires_at = "2099-01-01T00:00:00+00:00"
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()  # TTL của run
     ts = datetime.now(timezone.utc).isoformat()
 
     # --- Run A: search_docs (untrusted content) ---
@@ -99,7 +99,7 @@ def handle(
         egress_enabled=False,
         principal_id=principal_id,
         requested_tool="search_docs",
-        agent_scopes=("search_docs", "read_customer"),
+        agent_scopes=("search_docs",),
         expires_at=expires_at,
     )
     allowed_search, reason_search = check(ctx_search)
@@ -163,7 +163,7 @@ def handle(
             egress_enabled=False,
             principal_id=principal_id,
             requested_tool="read_customer",
-            agent_scopes=("search_docs", "read_customer"),
+            agent_scopes=("read_customer",),
             parent_scopes=("search_docs", "read_customer"),
             expires_at=expires_at,
         )
@@ -201,7 +201,7 @@ def handle(
             egress_enabled=True,
             principal_id=principal_id,
             requested_tool="http_post",
-            agent_scopes=("search_docs", "read_customer"),
+            agent_scopes=("read_customer", "http_post"),
             parent_scopes=("search_docs", "read_customer"),
             expires_at=expires_at,
         )

@@ -73,41 +73,41 @@ def check(context: PolicyContext) -> tuple[bool, str]:
     if context.data_classification == "restricted" and context.egress_enabled:
         return False, "Egress is prohibited when accessing restricted data classification"
 
-    # 3. Kiểm tra principal & OBO
-    if context.principal_id:
-        principals = _load_principals()
-        if context.principal_id not in principals:
-            return False, f"Unknown principal_id: {context.principal_id}"
+    # 3. Kiểm tra principal & OBO — fail-closed: thiếu thông tin nào cũng deny
+    if not context.principal_id:
+        return False, "Missing principal_id: cannot act on behalf of anyone"
+    if not context.requested_tool:
+        return False, "Missing requested_tool"
+    if not context.expires_at:
+        return False, "Missing expires_at: run has no TTL"
+    if not context.agent_scopes:
+        return False, "Empty agent_scopes: agent has no granted scope"
 
-        principal_info = principals[context.principal_id]
+    principals = _load_principals()
+    if context.principal_id not in principals:
+        return False, f"Unknown principal_id: {context.principal_id}"
+    principal_info = principals[context.principal_id]
 
-        # Kiểm tra expiration
-        if context.expires_at:
-            try:
-                exp_dt = datetime.fromisoformat(context.expires_at)
-                now_utc = datetime.now(timezone.utc)
-                if exp_dt <= now_utc:
-                    return False, f"Context has expired at {context.expires_at}"
-            except Exception as e:
-                return False, f"Invalid expires_at format: {e}"
+    try:
+        exp_dt = datetime.fromisoformat(context.expires_at)
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        return False, f"Invalid expires_at format: {e}"
+    if exp_dt <= datetime.now(timezone.utc):
+        return False, f"Context has expired at {context.expires_at}"
 
-        # Kiểm tra purpose
-        if context.request_purpose:
-            allowed_purposes = principal_info.get("purposes", [])
-            if context.request_purpose not in allowed_purposes:
-                return False, f"Purpose '{context.request_purpose}' is not authorized for principal '{context.principal_id}'"
+    if context.request_purpose not in principal_info.get("purposes", []):
+        return False, f"Purpose '{context.request_purpose}' is not authorized for principal '{context.principal_id}'"
 
-        # Kiểm tra requested_tool và scopes
-        if context.requested_tool:
-            principal_allowed_tools = principal_info.get("allowed_tools", [])
-            if context.requested_tool not in principal_allowed_tools:
-                return False, f"Tool '{context.requested_tool}' is not in allowed_tools for principal '{context.principal_id}'"
+    if context.requested_tool not in principal_info.get("allowed_tools", []):
+        return False, f"Tool '{context.requested_tool}' is not in allowed_tools for principal '{context.principal_id}'"
+    if context.requested_tool not in context.agent_scopes:
+        return False, f"Tool '{context.requested_tool}' exceeds agent_scopes"
+    if context.delegation_depth > 0 and context.requested_tool not in context.parent_scopes:
+        return False, f"Delegation depth {context.delegation_depth} exceeds parent_scopes for tool '{context.requested_tool}'"
 
-            if context.agent_scopes and context.requested_tool not in context.agent_scopes:
-                return False, f"Tool '{context.requested_tool}' exceeds agent_scopes"
-
-            if context.delegation_depth > 0:
-                if not context.parent_scopes or context.requested_tool not in context.parent_scopes:
-                    return False, f"Delegation depth {context.delegation_depth} exceeds parent_scopes for tool '{context.requested_tool}'"
-
-    return True, f"Authorized access for classification={context.data_classification}, tool={context.requested_tool or 'none'}, principal={context.principal_id or 'none'}"
+    return True, (
+        f"Authorized: principal={context.principal_id}, tool={context.requested_tool}, "
+        f"classification={context.data_classification}, purpose={context.request_purpose}"
+    )

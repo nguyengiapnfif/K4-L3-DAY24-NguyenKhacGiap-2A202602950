@@ -30,10 +30,68 @@ set ở tests/vn_pii_testset.jsonl):
 """
 from __future__ import annotations
 
+import re
+
+# Regex patterns
+RE_EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+RE_CCCD = re.compile(r"\b\d{12}\b")
+# Phone in Vietnam: starts with 0 and followed by 9 digits (total 10 digits) or with separators
+RE_PHONE = re.compile(r"(?<!\d)(0\d{9})(?!\d)")
+# Bank account: 8-16 digits often preceded by STK / số tài khoản / TK
+RE_BANK_ACCOUNT = re.compile(
+    r"(?i)(?:STK|số\s+tài\s+khoản|tài\s+khoản|TK)\s*[:#\-]?\s*(\d{8,16})\b"
+)
+
 
 def detect(text: str) -> list[dict]:
-    raise NotImplementedError("BƯỚC 3a: implement PII detection")
+    entities: list[dict] = []
+
+    # 1. EMAIL
+    for m in RE_EMAIL.finditer(text):
+        entities.append({"type": "EMAIL", "start": m.start(), "end": m.end()})
+
+    # 2. BANK ACCOUNT (prioritize capture group of the account number)
+    for m in RE_BANK_ACCOUNT.finditer(text):
+        start, end = m.start(1), m.end(1)
+        entities.append({"type": "VN_BANK_ACCOUNT", "start": start, "end": end})
+
+    # 3. CCCD (12 digits) - avoid if overlapping with already found bank accounts
+    for m in RE_CCCD.finditer(text):
+        start, end = m.start(), m.end()
+        # check if already captured
+        overlap = False
+        for e in entities:
+            if start < e["end"] and end > e["start"]:
+                overlap = True
+                break
+        if not overlap:
+            entities.append({"type": "VN_CCCD", "start": start, "end": end})
+
+    # 4. PHONE (10 digits starting with 0) - avoid if overlapping with CCCD / Bank account
+    for m in RE_PHONE.finditer(text):
+        start, end = m.start(1), m.end(1)
+        overlap = False
+        for e in entities:
+            if start < e["end"] and end > e["start"]:
+                overlap = True
+                break
+        if not overlap:
+            entities.append({"type": "VN_PHONE", "start": start, "end": end})
+
+    # Sort entities by start offset ascending
+    entities.sort(key=lambda x: (x["start"], x["end"]))
+    return entities
 
 
 def redact(text: str) -> str:
-    raise NotImplementedError("BƯỚC 3a: implement PII redaction")
+    entities = detect(text)
+    if not entities:
+        return text
+
+    # Sort by start descending to replace without offsetting indices
+    sorted_entities = sorted(entities, key=lambda x: x["start"], reverse=True)
+    res = text
+    for e in sorted_entities:
+        placeholder = f"[REDACTED_{e['type']}]"
+        res = res[: e["start"]] + placeholder + res[e["end"] :]
+    return res

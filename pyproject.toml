@@ -1,0 +1,10 @@
+[project]
+name = "k4-l3-day24-nguyenkhacgiap-2a202602950"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pip-tools>=7.6.2",
+    "pre-commit>=4.6.2",
+    "pytest>=8.0,<10",
+    "requests>=2.31,<3",
+]

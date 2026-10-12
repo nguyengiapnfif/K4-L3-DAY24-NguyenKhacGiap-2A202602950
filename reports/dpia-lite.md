@@ -1,6 +1,6 @@
-# DPIA-lite — điền trong checkpoint 5
+# DPIA-lite — CP5 (bản mô tả học tập, không phải đánh giá tác động pháp lý)
 
-1. Loại dữ liệu và phân loại:
-2. Mục đích xử lý và principal:
-3. Dữ liệu đi qua những run/tool nào, endpoint nào:
-4. Bằng chứng deny/allow và giới hạn của mock:
+1. **Loại dữ liệu và phân loại:** ticket trong `corpus/` (`internal`, có thể chứa chỉ thị độc hại và PII) và hồ sơ khách **giả** trong `data/customers.json` (`restricted`: tên, CCCD, SĐT, STK, email). Toàn bộ là dữ liệu synthetic.
+2. **Mục đích xử lý và principal:** `support_l1` chỉ được `search_docs` (tổng hợp ticket, `summarize-tickets`/`support-reply`); `dpo` được `read_customer` cho `support-reply`/`privacy-audit`. Principal lấy từ `data/principals.json` (mô phỏng, không xác thực thật).
+3. **Dữ liệu đi qua đâu:** Run A (`search_docs`, che PII bằng `pii.redact`, chỉ trích số ticket từ tên file) → Run B (tra `related_tickets` trong `customers.json`, policy kiểm trước mỗi `read_customer`) → bước `http_post` tới sink localhost `127.0.0.1:10024/reconcile`, chỉ được kiểm bởi policy; mọi quyết định ghi `reports/ledger.jsonl` (chỉ `args_hash`, không ghi PII).
+4. **Đã chặn/cho phép gì, giới hạn:** `support_l1` bị deny `read_customer`; `dpo` đọc được hồ sơ hợp lệ nhưng `http_post` (restricted + egress) bị deny; `attack-before.log` 4 POST (1196 byte) so với `attack-after.log` 0 byte; ledger 92 dòng verify `True`, 4 dòng `http_post` đều deny. Giới hạn: LLM là mock; quyền và danh tính giả lập; regex PII chỉ phủ 4 loại theo định dạng cố định, không bắt tên; hash chain trong một file không phát hiện xoá dòng cuối hoặc viết lại cả file; `http_post` luôn bị chặn theo thiết kế nên chưa kiểm một luồng egress hợp lệ nào.

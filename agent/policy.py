@@ -35,6 +35,11 @@ không phải xác thực người dùng production.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+
+PRINCIPALS_PATH = Path(__file__).resolve().parent.parent / "data" / "principals.json"
 
 
 @dataclass(frozen=True)
@@ -51,5 +56,58 @@ class PolicyContext:
     expires_at: str = ""
 
 
+def _load_principals() -> dict[str, dict]:
+    if not PRINCIPALS_PATH.exists():
+        return {}
+    with PRINCIPALS_PATH.open(encoding="utf-8") as f:
+        return json.load(f)
+
+
 def check(context: PolicyContext) -> tuple[bool, str]:
-    raise NotImplementedError("BƯỚC 3b: implement policy check")
+    # 1. Kiểm tra data_classification hợp lệ
+    valid_classifications = {"public", "internal", "restricted"}
+    if context.data_classification not in valid_classifications:
+        return False, f"Invalid data_classification: {context.data_classification}"
+
+    # 2. Rule tối thiểu: data restricted + egress -> DENY
+    if context.data_classification == "restricted" and context.egress_enabled:
+        return False, "Egress is prohibited when accessing restricted data classification"
+
+    # 3. Kiểm tra principal & OBO
+    if context.principal_id:
+        principals = _load_principals()
+        if context.principal_id not in principals:
+            return False, f"Unknown principal_id: {context.principal_id}"
+
+        principal_info = principals[context.principal_id]
+
+        # Kiểm tra expiration
+        if context.expires_at:
+            try:
+                exp_dt = datetime.fromisoformat(context.expires_at)
+                now_utc = datetime.now(timezone.utc)
+                if exp_dt <= now_utc:
+                    return False, f"Context has expired at {context.expires_at}"
+            except Exception as e:
+                return False, f"Invalid expires_at format: {e}"
+
+        # Kiểm tra purpose
+        if context.request_purpose:
+            allowed_purposes = principal_info.get("purposes", [])
+            if context.request_purpose not in allowed_purposes:
+                return False, f"Purpose '{context.request_purpose}' is not authorized for principal '{context.principal_id}'"
+
+        # Kiểm tra requested_tool và scopes
+        if context.requested_tool:
+            principal_allowed_tools = principal_info.get("allowed_tools", [])
+            if context.requested_tool not in principal_allowed_tools:
+                return False, f"Tool '{context.requested_tool}' is not in allowed_tools for principal '{context.principal_id}'"
+
+            if context.agent_scopes and context.requested_tool not in context.agent_scopes:
+                return False, f"Tool '{context.requested_tool}' exceeds agent_scopes"
+
+            if context.delegation_depth > 0:
+                if not context.parent_scopes or context.requested_tool not in context.parent_scopes:
+                    return False, f"Delegation depth {context.delegation_depth} exceeds parent_scopes for tool '{context.requested_tool}'"
+
+    return True, f"Authorized access for classification={context.data_classification}, tool={context.requested_tool or 'none'}, principal={context.principal_id or 'none'}"
